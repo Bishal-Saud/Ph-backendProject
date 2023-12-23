@@ -1,9 +1,8 @@
-import express from "express";
+import app from "./app.js";
+import dbConnect from "./Config/dbConnect.js";
+const PORT = process.env.PORT || 3005;
 
-const app = express();
-
-app.use("/running", (req, res) => {
-  res.send("Everything is up to date");
+app.listen(PORT, () => {
+  dbConnect();
+  console.log(`server is running   http://localhost:${PORT}`);
 });
-
-export default app;
