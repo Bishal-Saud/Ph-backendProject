@@ -103,17 +103,179 @@ const logIn = async (req, res, next) => {
   }
 };
 
-const logout = async (req, res, next) => {};
+const logout = async (req, res, next) => {
+  res.cookie("token", null, {
+    secure: process.env.NODE_ENV === "production" ? true : false,
+    maxAge: 0,
+    httpOnly: true,
+  });
 
-const showProfile = async (req, res, next) => {};
+  res.status(200).json({
+    success: true,
+    message: "User logged out successfully",
+  });
+};
 
-const forgotPassword = async (req, res, next) => {};
+const showProfile = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id);
 
-const resetPassword = async (req, res, next) => {};
+    res.status(200).json({
+      success: true,
+      message: "User details",
+      user,
+    });
+  } catch (error) {
+    return next(new AppError("Failed to fetch profile/user details ", 500));
+  }
+};
 
-const changePassword = async (req, res, next) => {};
+const forgotPassword = async (req, res, next) => {
+  const { email } = req.body;
+  if (!email) {
+    return next(new AppError("Email is required", 400));
+  }
+  const user = await User.findOne({ email });
+  if (!user) {
+    return next(new AppError("Email is not registered ", 500));
+  }
+  const resetToken = await user.generateResetPasswordToken();
+  await user.save();
 
-const updateUser = async (req, res, next) => {};
+  const resetPasswordUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
+
+  const subject = "Reset password";
+  const message = `You can reset your password by clicking <a href=${resetPasswordUrl} target="_blank">Reset your password</a>\nIf the above link does not work for some reason then copy paste this link in new tab ${resetPasswordUrl}.\n If you have not requested this, kindly ignore.`;
+
+  try {
+    await sendEmail(email, subject, message);
+    res.status(200).json({
+      success: true,
+      message: `Reset password token has been sent to the ${email} successfully`,
+    });
+  } catch (error) {
+    user.forgotPasswordExpiry = undefined;
+    user.forgotPasswordToken = undefined;
+    await user.save();
+    return next(new AppError(error.message, 500));
+  }
+};
+const resetPassword = async (req, res, next) => {
+  const { resetToken } = req.params;
+  const { password } = req.body;
+
+  if (!password) {
+    return next(new AppError("Password is required", 400));
+  }
+  const forgotPasswordToken = crypto
+    .createHash("sha256")
+    .update(resetToken)
+    .digest("hex");
+  const user = User.findOne({
+    forgotPasswordToken,
+    forgotPasswordExpiry: { $gt: Date.now() },
+  });
+
+  if (!user) {
+    return next(new AppError("Token is invalid or expired Try Again", 500));
+  }
+
+  user.password = undefined;
+  user.forgotPasswordToken = undefined;
+  user.forgotPasswordExpiry = undefined;
+  await user.save();
+
+  res.status(200).json({
+    success: true,
+    message: `Your password changed successfully`,
+  });
+};
+
+const changePassword = async (req, res, next) => {
+  const { oldPassword, newPassword } = req.body;
+  const { id } = req.user;
+
+  if (!oldPassword || !newPassword) {
+    return next(new AppError("All fields are mandatory", 400));
+  }
+
+  const user = await User.findById(id).select("+password");
+
+  if (!user) {
+    return next(new AppError("User does not exist", 400));
+  }
+
+  const isPasswordValid = await user.comparePassword(oldPassword);
+
+  if (!isPasswordValid) {
+    return next(new AppError("Invalid old password", 400));
+  }
+  user.password = newPassword;
+
+  await user.save();
+
+  user.password = undefined;
+
+  res.status(200).json({
+    success: true,
+    message: "Password changed successfully!",
+  });
+};
+
+const updateUser = async (req, res, next) => {
+  // Destructuring the necessary data from the req object
+  const { fullName } = req.body;
+  const { id } = req.params;
+
+  const user = await User.findById(id);
+
+  if (!user) {
+    return next(new AppError("Invalid user id or user does not exist"));
+  }
+
+  if (fullName) {
+    user.fullName = fullName;
+  }
+
+  // Run only if user sends a file
+  if (req.file) {
+    // Deletes the old image uploaded by the user
+    await cloudinary.v2.uploader.destroy(user.avatar.public_id);
+
+    try {
+      const result = await cloudinary.v2.uploader.upload(req.file.path, {
+        folder: "lms", // Save files in a folder named lms
+        width: 250,
+        height: 250,
+        gravity: "faces", // This option tells cloudinary to center the image around detected faces (if any) after cropping or resizing the original image
+        crop: "fill",
+      });
+
+      // If success
+      if (result) {
+        // Set the public_id and secure_url in DB
+        user.avatar.public_id = result.public_id;
+        user.avatar.secure_url = result.secure_url;
+
+        // After successful upload remove the file from local storage
+        fs.rm(`upload/${req.file.filename}`);
+      }
+    } catch (error) {
+      return next(
+        new AppError(error || "File not uploaded, please try again", 400)
+      );
+    }
+  }
+
+  // Save the user object
+  await user.save();
+
+  res.status(200).json({
+    success: true,
+    message: "User details updated successfully",
+    user,
+  });
+};
 
 export {
   signIn,

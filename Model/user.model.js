@@ -1,5 +1,6 @@
 import { Schema, model } from "mongoose";
-
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 const userSchema = new Schema(
   {
     fullName: {
@@ -60,18 +61,19 @@ userSchema.pre("save", async function (next) {
 });
 
 userSchema.methods = {
-  generateJWTToken: async function(){
+  generateJWTToken: async function () {
     return await jwt.sign(
       {
-        id:this._id,role:this.role
-      }, 
-      process.env.JWT_SECRET,{
-        expiresIn:process.env.JWT_EXPIRY,
+        id: this._id,
+        role: this.role,
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: process.env.JWT_EXPIRY,
       }
-    )
+    );
   },
-  
-}
+};
 
 const User = model("Patient", userSchema);
 
